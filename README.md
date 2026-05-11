@@ -190,7 +190,7 @@ exists = bool(data) and data.get("product_id") == "TSX-9001"
 | `filter_field` + `filter_value` | string | 二级筛选；`filter_field` 必须是 `subcat_<id>` 之一，或字面量 `category`（按 supercat 名前缀过滤） |
 | `page` | int ≥ 1 | 默认 `1` |
 | `page_size` | int 1-1000 | 默认 `50` |
-| `sort_by` | string | `timestamp` / `created_time` / `sales_count` / `price`；缺省按 `timestamp` 倒序。⚠ **`price` 走的是 product 顶层标量 `price` 字段，对 dict-only 上传的新商品会被当成 0 处理**——若需要按价格排序，目前建议自己拉回结果集后在客户端对 `prices` dict 聚合排序 |
+| `sort_by` | string | `timestamp` / `created_time` / `sales_count` / `price`；缺省按 `timestamp` 倒序。`price` 排序对 dict-only 上传的新商品也工作正常——服务端会按 `prices` dict 首个变体的价格作为代表价排序（与商品页 / 列表卡上显示的价格一致） |
 | `sort_order` | `asc`/`desc` | 默认 `desc` |
 
 **响应**：
@@ -461,6 +461,10 @@ cd examples/curl
 ```
 
 ---
+
+**版本：v1.7（2026-05-11）**
+- 后端在 GET 响应 / 购物车 snapshot 时自动从 `prices` / `grouped_images` dict 合成 `price` / `images`（响应层视图，不写回 Redis；存储层保持 dict-only）。`sort_by=price` 因此对 dict-only 上传的新商品也工作正常——按 dict 首个变体的代表价排序。原来 2.2.2 标注的"sort_by=price 当 0 处理" ⚠ 警告随之撤除
+- 购物车 / 小票按 cart_info item 的 `selected_type` 取对应变体的价格 / 图片合成到 item.price / item.images，让小程序里 `item.price` 类的读取兼容路径直接拿到对应变体的真实值
 
 **版本：v1.6（2026-05-11）**
 - **服务端开始强制校验首次创建的必填字段**：首次 POST `/api/product/?product_id=<id>` 若 body 缺 `prices` / `grouped_images` / `category` 任意一项，返回 400 并在 `detail` 里列出缺失字段；已存在商品的后续 POST 仍按部分更新处理（不校验完整性）。错误码表新增对应行。`name` **不在必填集**——storefront 和 Panel 都有 `product.name || product.product_id` 的兜底渲染，与 Panel 批量上传不录入 name 的现有约定保持一致
