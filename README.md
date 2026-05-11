@@ -240,21 +240,36 @@ Query 参数：
 | `image_tag` | ❌ | 图搜库标签；缺省自动取本实例 store_id，一般无需传 |
 
 Body（`product_info`）建议字段：
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `product_id` | string | 与 query 一致即可（也可省略，服务端会自动补） |
-| `name` | string | 商品名 |
-| `prices` | `{variant: number}` | 按变体存价格的 dict，key 为变体码（如 `"AQ"`、`"CGAQ"`），无变体的商品统一用 `"默认"`。详见 2.1 |
-| `grouped_images` | `{variant: string[]}` | 按变体存图片 URL 的 dict，key 同 `prices`。详见 2.1 |
-| `category` | string | 分类 ID；该分类需事先在 Panel "分类管理"中存在 |
-| `tag_ids` | string[] | 商品标签 ID 列表，如 `["C1_银制", "C1_耳饰"]` |
-| `subcat_<id>` | string | 子分类取值；键名形如 `subcat_classify`、`subcat_material`，值为子分类的可选值 ID。注意 subcat 是**给整个商品打的分类标签**（便于筛选），与上面的变体维度不是一回事 |
-| `plating` | string | 镀层 |
-| `material` | string | 材质 |
-| `stone` | string | 锆石 / 主石 |
-| `page` | string | 版面（商家内部分页） |
-| `showroom_number` | string | 展厅柜号 |
-| `require_groups` | string[] | 仅供指定分组用户可见时使用的分组 ID；不传即对所有顾客可见 |
+| 字段 | 必填 | 类型 | 说明 |
+|---|---|---|---|
+| `product_id` | ✅ | string | 与 query 一致即可（也可省略，服务端会自动补） |
+| `name` | ✅ | string | 商品名 |
+| `prices` | ✅ | `{variant: number}` | 按变体存价格的 dict，key 为变体码（如 `"AQ"`、`"CGAQ"`），无变体的商品统一用 `"默认"`。详见 2.1 |
+| `grouped_images` | ✅ | `{variant: string[]}` | 按变体存图片 URL 的 dict，key 同 `prices`。详见 2.1 |
+| `category` | ✅ | string | 分类 ID；该分类需事先在 Panel "分类管理"中存在 |
+| `tag_ids` | ❌ | string[] | 商品标签 ID 列表，如 `["C1_银制", "C1_耳饰"]` |
+| `subcat_<id>` | ❌ | string | 子分类取值；键名形如 `subcat_classify`、`subcat_material`，值为子分类的可选值 ID。注意 subcat 是**给整个商品打的分类标签**（便于筛选），与上面的变体维度不是一回事 |
+| `plating` | ❌ | string | 镀层 |
+| `material` | ❌ | string | 材质 |
+| `stone` | ❌ | string | 锆石 / 主石 |
+| `page` | ❌ | string | 版面（商家内部分页） |
+| `showroom_number` | ❌ | string | 展厅柜号 |
+| `require_groups` | ❌ | string[] | 仅供指定分组用户可见时使用的分组 ID；不传即对所有顾客可见 |
+
+**关于必填字段**：上表前 5 个 ✅ 字段是创建商品的最小集合。其中 4 个可以直接从 SKU 文件名按平台命名规则**解析得到**——只剩 `name` 和 `prices` 的数值需要你自己提供：
+
+| 必填字段 | 来源 |
+|---|---|
+| `product_id` | 文件名前两段 `<类别>-<4位数字>`，例如 `TSX-2760AQ.jpg` → `TSX-2760` |
+| `category` | 文件名第一段，例如 `TSX-2760AQ.jpg` → `TSX` |
+| `grouped_images` 的 **key 集合** | 文件名第二段尾部字母（变体码），无字母后缀 → `"默认"`；URL 列表来自 2.1 上传图片接口的返回 |
+| `prices` 的 **key 集合** | 同上，key 与 `grouped_images` 完全对齐 |
+| `prices` 的**数值** | 若文件名第三段以数字开头（如 `R2-0115B-49.8.jpg` → 49.8）可解析得到；否则需自己提供 |
+| `name` | 需自己提供 |
+
+解析方法见 §2.1 "图片文件命名规则" 与示例 [`examples/python/parser.py`](./examples/python/parser.py)；端到端跑通参见 §7 "路线 B：你只有一堆按命名规范取名的图"。
+
+> ⚠ 说明：服务端 **不会** 因为缺这些 ✅ 字段而 400/422（API 接受任意 `product_info` dict 透传保存），但缺字段的商品在 Panel 后台和小程序前台会渲染异常——比如缺 `prices` 显示 ¥0，缺 `grouped_images` 显示空白图，缺 `category` 无法被分类筛选命中。**当成必填来对待**。
 
 未列出的字段会**透传保存**，后续可在 Panel 中读出来。
 
@@ -443,7 +458,9 @@ cd examples/curl
 
 ---
 
-**版本：v1.4（2026-05-11）**
+**版本：v1.5（2026-05-11）**
+- 2.3 Body 字段表新增 "必填" 列，标出 `product_id` / `name` / `prices` / `grouped_images` / `category` 五个必填字段，并附 "来源对照表" 说明哪些可从文件名直接解析、哪些需自己提供
+- 订正变体码与 `subcat_*` 子分类的概念混淆——SKU 子项 vs 商品级标签是两件事
 - 新增 2.2 查询商品（GET）小节：单条查存在性 / 列表 / 搜索 / 分页；明确 "查不到返回 200 + `{}`，不返回 404" 的判存在性陷阱。原 2.2/2.3/2.4 顺延到 2.3/2.4/2.5
 - 商品字段统一为 `prices` / `grouped_images` 两个 dict（变体维度即 SKU），废弃 `price` / `images` 扁平字段
 - SKU 编号到 4 位数字结束、无字母后缀的商品，dict 用中文字面量 `"默认"` 作为唯一 key（与 Panel 既有约定对齐）
