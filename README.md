@@ -139,7 +139,90 @@ API 上的 `product_id` 是**类别 + 4 位数字**那段（如 `TSX-2760`），
 - `IMAGES/e-store-00/SAMPLE/TSX-2760AQ(1).jpg`
 - `IMAGES/e-store-00/2026Q2/IMPORT/AC-1611AQ.jpg`
 
-### 2.2 创建 / 更新商品（upsert）
+### 2.2 查询商品（GET）
+
+读取接口**不需要 token**——`/api/product/` 的 GET 全部公开，方便前端在 upsert 前先查存在性 / 拉列表 / 搜索。
+
+#### 2.2.1 单个商品 / 查存在性
+
+```
+GET $HOST/api/product/?product_id=<id>
+```
+
+**响应**
+
+- **找得到**：返回完整 product dict（字段同 2.3 upsert 接受的字段，**外加** `sales_count`、`timestamp`、`view` 等服务端维护字段）
+  ```json
+  200 {
+    "product_id": "TSX-9001",
+    "name": "动物造型铜质手链",
+    "prices":         { "AQ": 89 },
+    "grouped_images": { "AQ": ["https://...", "https://..."] },
+    "category": "TSX",
+    "sales_count": 0,
+    "timestamp": 1715400000,
+    ...
+  }
+  ```
+- **找不到**：⚠ **HTTP 仍然是 200，body 是空对象 `{}`**。**不会**返回 404，请勿用状态码判断。
+
+**判断存在性的正确姿势**：
+
+```python
+import requests
+r = requests.get(f"{HOST}/api/product/", params={"product_id": "TSX-9001"})
+data = r.json()
+exists = bool(data) and data.get("product_id") == "TSX-9001"
+```
+
+或者更宽松一点 —— `exists = bool(data)`（空 dict falsy）。
+
+#### 2.2.2 列表 / 搜索 / 分页
+
+不传 `product_id` 即进入列表模式，所有过滤参数都是**可选**，可叠加：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `category` | string | 按 category_id 过滤；与 `tag` 互斥（同时传以 category 为准） |
+| `tag` | string | 按 tag_id 过滤 |
+| `search` | string | 全字段关键词搜索（product_id / category / prices 各值 / tag_ids） |
+| `filter_field` + `filter_value` | string | 二级筛选；`filter_field` 必须是 `subcat_<id>` 之一，或字面量 `category`（按 supercat 名前缀过滤） |
+| `page` | int ≥ 1 | 默认 `1` |
+| `page_size` | int 1-1000 | 默认 `50` |
+| `sort_by` | string | `timestamp` / `created_time` / `sales_count` / `price`；缺省按 `timestamp` 倒序。⚠ **`price` 走的是 product 顶层标量 `price` 字段，对 dict-only 上传的新商品会被当成 0 处理**——若需要按价格排序，目前建议自己拉回结果集后在客户端对 `prices` dict 聚合排序 |
+| `sort_order` | `asc`/`desc` | 默认 `desc` |
+
+**响应**：
+
+```json
+200 {
+  "results": [ { ...product... }, ... ],   // 当前页的商品数组
+  "count": 123,                            // 应用过滤后的总数
+  "total_all_products": 456,               // 过滤前的库内总数
+  "page": 1,
+  "page_size": 50,
+  "total_pages": 3
+}
+```
+
+**典型用法**：
+
+```python
+# 检查某个分类下你已经上传过多少 SKU
+r = requests.get(
+    f"{HOST}/api/product/",
+    params={"category": "TSX", "page": 1, "page_size": 1},
+)
+already_uploaded_in_category = r.json()["count"]
+
+# 按 product_id 模糊搜
+r = requests.get(f"{HOST}/api/product/", params={"search": "9001"})
+matched = r.json()["results"]
+```
+
+---
+
+### 2.3 创建 / 更新商品（upsert）
 
 ```
 POST $HOST/api/product/?product_id=<id>
@@ -190,7 +273,7 @@ Body（`product_info`）建议字段：
 
 幂等：完整重发同样 body 得到 `"updated": false`。
 
-### 2.3 删除商品
+### 2.4 删除商品
 
 ```
 DELETE $HOST/api/product/?product_id=<id>
@@ -203,7 +286,7 @@ Authorization: Bearer <token>
 404 { "detail": "Product not found" }
 ```
 
-### 2.4 批量删除
+### 2.5 批量删除
 
 ```
 DELETE $HOST/api/products/
@@ -359,4 +442,7 @@ cd examples/curl
 
 ---
 
-**版本：v1.3（2026-05-11）** —— 商品字段统一为 `prices` / `grouped_images` 两个 dict（变体维度即 SKU），废弃 `price` / `images` 扁平字段。SKU 编号到 4 位数字结束、无字母后缀的商品，dict 用中文字面量 `"默认"` 作为唯一 key（与 Panel 既有约定对齐）。
+**版本：v1.4（2026-05-11）**
+- 新增 2.2 查询商品（GET）小节：单条查存在性 / 列表 / 搜索 / 分页；明确 "查不到返回 200 + `{}`，不返回 404" 的判存在性陷阱。原 2.2/2.3/2.4 顺延到 2.3/2.4/2.5
+- 商品字段统一为 `prices` / `grouped_images` 两个 dict（变体维度即 SKU），废弃 `price` / `images` 扁平字段
+- SKU 编号到 4 位数字结束、无字母后缀的商品，dict 用中文字面量 `"默认"` 作为唯一 key（与 Panel 既有约定对齐）
