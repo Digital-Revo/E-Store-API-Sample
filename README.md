@@ -243,10 +243,10 @@ Body（`product_info`）建议字段：
 | 字段 | 必填 | 类型 | 说明 |
 |---|---|---|---|
 | `product_id` | ✅ | string | 与 query 一致即可（也可省略，服务端会自动补） |
-| `name` | ✅ | string | 商品名 |
 | `prices` | ✅ | `{variant: number}` | 按变体存价格的 dict，key 为变体码（如 `"AQ"`、`"CGAQ"`），无变体的商品统一用 `"默认"`。详见 2.1 |
 | `grouped_images` | ✅ | `{variant: string[]}` | 按变体存图片 URL 的 dict，key 同 `prices`。详见 2.1 |
 | `category` | ✅ | string | 分类 ID；该分类需事先在 Panel "分类管理"中存在 |
+| `name` | ❌ | string | 商品名；缺省时 Panel 与小程序回退显示 `product_id` |
 | `tag_ids` | ❌ | string[] | 商品标签 ID 列表，如 `["C1_银制", "C1_耳饰"]` |
 | `subcat_<id>` | ❌ | string | 子分类取值；键名形如 `subcat_classify`、`subcat_material`，值为子分类的可选值 ID。注意 subcat 是**给整个商品打的分类标签**（便于筛选），与上面的变体维度不是一回事 |
 | `plating` | ❌ | string | 镀层 |
@@ -256,7 +256,7 @@ Body（`product_info`）建议字段：
 | `showroom_number` | ❌ | string | 展厅柜号 |
 | `require_groups` | ❌ | string[] | 仅供指定分组用户可见时使用的分组 ID；不传即对所有顾客可见 |
 
-**关于必填字段**：上表前 5 个 ✅ 字段是创建商品的最小集合。其中 4 个可以直接从 SKU 文件名按平台命名规则**解析得到**——只剩 `name` 和 `prices` 的数值需要你自己提供：
+**关于必填字段**：上表前 4 个 ✅ 字段是首次创建商品的最小集合，全部可以从 SKU 文件名按平台命名规则解析得到（只有 `prices` 的**数值**有时需要自己提供）：
 
 | 必填字段 | 来源 |
 |---|---|
@@ -265,11 +265,14 @@ Body（`product_info`）建议字段：
 | `grouped_images` 的 **key 集合** | 文件名第二段尾部字母（变体码），无字母后缀 → `"默认"`；URL 列表来自 2.1 上传图片接口的返回 |
 | `prices` 的 **key 集合** | 同上，key 与 `grouped_images` 完全对齐 |
 | `prices` 的**数值** | 若文件名第三段以数字开头（如 `R2-0115B-49.8.jpg` → 49.8）可解析得到；否则需自己提供 |
-| `name` | 需自己提供 |
 
 解析方法见 §2.1 "图片文件命名规则" 与示例 [`examples/python/parser.py`](./examples/python/parser.py)；端到端跑通参见 §7 "路线 B：你只有一堆按命名规范取名的图"。
 
-> ⚠ 说明：服务端 **不会** 因为缺这些 ✅ 字段而 400/422（API 接受任意 `product_info` dict 透传保存），但缺字段的商品在 Panel 后台和小程序前台会渲染异常——比如缺 `prices` 显示 ¥0，缺 `grouped_images` 显示空白图，缺 `category` 无法被分类筛选命中。**当成必填来对待**。
+> **创建 / 更新语义**：
+> - **首次创建**（该 `product_id` 在库中不存在）—— 上述 4 个必填字段必须带齐，缺任意一个服务端 **400 拒绝**，错误体 `detail` 里列出缺失字段名。
+> - **后续 POST 更新**（该 `product_id` 已存在）—— 视为**部分更新**，只带要改的字段即可；其它字段保持原值。不做完整性校验。
+>
+> 这样设计的好处：避免新接入方意外创建出半残商品（缺图缺价、无分类），同时不影响"补一两个字段"的增量更新场景。
 
 未列出的字段会**透传保存**，后续可在 Panel 中读出来。
 
@@ -374,6 +377,7 @@ print(r.json())
 | HTTP | 含义 | 常见原因 |
 |---|---|---|
 | 400 | `folder 必须以 '<store_id>' 开头...` / `folder 不能包含空段或 '..' 路径回溯` | 调 `/api/file_to_url` 传了不合规 folder（详见 2.1） |
+| 400 | `首次创建商品 <id> 时缺少必填字段：[...]` | 首次 POST `/api/product/` 时 body 没带齐 `prices` / `grouped_images` / `category` 之一（详见 2.3）。已存在商品的后续 POST 不触发此错 |
 | 401 | `Authorization header is required` / `Invalid access token` | 没带 token / 格式错 / token 被吊销 |
 | 403 | `当前登录用户无权管理本实例业务员` | token 有效但其 `allowed_store_ids` 不含本实例（用错店的 token） |
 | 404 | `Product not found` | 删除 / 操作不存在的商品 |
@@ -458,8 +462,9 @@ cd examples/curl
 
 ---
 
-**版本：v1.5（2026-05-11）**
-- 2.3 Body 字段表新增 "必填" 列，标出 `product_id` / `name` / `prices` / `grouped_images` / `category` 五个必填字段，并附 "来源对照表" 说明哪些可从文件名直接解析、哪些需自己提供
+**版本：v1.6（2026-05-11）**
+- **服务端开始强制校验首次创建的必填字段**：首次 POST `/api/product/?product_id=<id>` 若 body 缺 `prices` / `grouped_images` / `category` 任意一项，返回 400 并在 `detail` 里列出缺失字段；已存在商品的后续 POST 仍按部分更新处理（不校验完整性）。错误码表新增对应行。`name` **不在必填集**——storefront 和 Panel 都有 `product.name || product.product_id` 的兜底渲染，与 Panel 批量上传不录入 name 的现有约定保持一致
+- 2.3 Body 字段表新增 "必填" 列，标出 4 个必填字段，并附 "来源对照表" 说明哪些可从文件名直接解析、哪些需自己提供
 - 订正变体码与 `subcat_*` 子分类的概念混淆——SKU 子项 vs 商品级标签是两件事
 - 新增 2.2 查询商品（GET）小节：单条查存在性 / 列表 / 搜索 / 分页；明确 "查不到返回 200 + `{}`，不返回 404" 的判存在性陷阱。原 2.2/2.3/2.4 顺延到 2.3/2.4/2.5
 - 商品字段统一为 `prices` / `grouped_images` 两个 dict（变体维度即 SKU），废弃 `price` / `images` 扁平字段
