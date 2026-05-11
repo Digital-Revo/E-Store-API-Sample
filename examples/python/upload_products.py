@@ -3,8 +3,13 @@
 E-Store 商品上传 端到端示例
 
 读取 data/products.json，每条记录：
-  1) 把 image_filenames 里的本地图通过 POST /api/file_to_url 上传到 COS，拿到 URL
-  2) 把这些 URL 与元数据合成 product_info，POST /api/product/ upsert 商品
+  1) 把 grouped_image_filenames 里每个变体下的本地图通过 POST /api/file_to_url
+     上传到 COS，拿到 URL（按变体分组保留）
+  2) 把 grouped URL + prices + 元数据合成 product_info，POST /api/product/ upsert
+
+变体（SKU）模型：
+  product_info 里的 prices / grouped_images 都是 dict，key 是变体码（如 "AQ"），
+  无变体的商品统一用 "默认" 作为唯一 key。
 
 环境变量：
   E_STORE_HOST   你被授权的实例 host（如 https://e-store-00.xenotech.studio）
@@ -90,17 +95,21 @@ def main() -> None:
         pid = p["product_id"]
         print(f"---- {pid}：{p['name']} ----")
 
-        # 1) 上传图片
-        image_urls = []
-        for fname in p.pop("image_filenames", []):
-            img_path = IMG_DIR / fname
-            print(f"  ↑ 上传 {fname} ...")
-            url = upload_image(img_path)
-            image_urls.append(url)
-            print(f"    → {url}")
+        # 1) 按变体逐张上传图片，保留变体 → URL 列表的映射
+        grouped_filenames: dict = p.pop("grouped_image_filenames", {})
+        grouped_images: dict[str, list[str]] = {}
+        for variant, fnames in grouped_filenames.items():
+            urls: list[str] = []
+            for fname in fnames:
+                img_path = IMG_DIR / fname
+                print(f"  ↑ [{variant}] 上传 {fname} ...")
+                url = upload_image(img_path)
+                urls.append(url)
+                print(f"      → {url}")
+            grouped_images[variant] = urls
 
-        # 2) upsert 商品
-        info = {**p, "images": image_urls}
+        # 2) upsert 商品：只用 dict 形式（prices / grouped_images）
+        info = {**p, "grouped_images": grouped_images}
         resp = upsert_product(pid, info)
         verb = "✚ 新建" if resp.get("created") else (
             "↻ 更新" if resp.get("updated") else "= 无变化"

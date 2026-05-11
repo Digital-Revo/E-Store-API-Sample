@@ -8,8 +8,13 @@
   AC_1611SZAQ (1).jpg       → product_id="AC-1611",   variant="SZAQ",  category="AC"
   YDJ-7493S(红).jpg         → product_id="YDJ-7493",  variant="S",     category="YDJ"  (中文被剥离)
   R2-0115B-49.8.jpg         → product_id="R2-0115",   variant="B",     category="R2",   price=49.8
+  TSX-2760.jpg              → product_id="TSX-2760",  variant="默认",  category="TSX"  (4 位数字后无字母 → 固定字面量 "默认")
+  TSX-2760(1).jpg           → 同上，variant="默认"，序号=1
 
 平台技术 product_id 是"类别 + 数字"那段；后面的字母（变体码）单独走 grouped_images。
+4 位数字后无字母后缀的商品，按平台约定使用中文 sentinel "默认" 作为唯一变体 key
+（与 Panel 的 filePreprocess.js / productImportTool.js 完全一致；不要替换成其他值）。
+价格按变体维度聚合，最终输出 prices: {variant: price} 的 dict（对应 API 字段 `prices`）。
 """
 
 from __future__ import annotations
@@ -31,7 +36,8 @@ class ParsedName(TypedDict):
     product_id: str           # 例 "TSX-2760"
     variant: str              # 例 "AQ"；缺省为 "默认"
     category: str             # 例 "TSX"
-    price: Optional[float]    # 文件名第三段开头的数字，单位元；缺省 None
+    price: Optional[float]    # 文件名第三段开头的数字（单位元）；该变体的价格，缺省 None
+                              # 聚合到 ProductTask 时进 prices[variant]
 
 
 def parse_filename(filename: str) -> Optional[ParsedName]:
@@ -82,9 +88,8 @@ def parse_filename(filename: str) -> Optional[ParsedName]:
 class ProductTask(TypedDict):
     product_id: str
     category: str
-    price: Optional[float]
+    prices: Mapping[str, float]               # {variant: price}，仅含从文件名解出的变体
     grouped_images: Mapping[str, List[str]]   # {variant: [filename, ...]}
-    image_filenames: List[str]                # 扁平顺序，主图（无 (N)）在前
 
 
 def group_by_product(filenames: Iterable[str]) -> List[ProductTask]:
@@ -108,23 +113,23 @@ def group_by_product(filenames: Iterable[str]) -> List[ProductTask]:
             {
                 "product_id": pid,
                 "category": parsed["category"],
-                "price": parsed["price"],
+                "prices": {},
                 "grouped_images": {},
-                "image_filenames": [],
             },
         )
-        if prod["price"] is None and parsed["price"] is not None:
-            prod["price"] = parsed["price"]
+        # 同一变体多张图、只要其中一张文件名带价格就采纳；同一变体出现多个价格时
+        # 保留先解出的那个（生产数据里同变体应只有一种价格）
+        variant = parsed["variant"]
+        if parsed["price"] is not None and variant not in prod["prices"]:
+            prod["prices"][variant] = parsed["price"]
 
         seq = _extract_seq(fname)
-        variant_buckets.setdefault((pid, parsed["variant"]), []).append((seq, fname))
+        variant_buckets.setdefault((pid, variant), []).append((seq, fname))
 
-    # 把每个 variant 桶按序号排序，写回 grouped_images / image_filenames
+    # 把每个 variant 桶按序号排序，写回 grouped_images
     for (pid, variant), items in variant_buckets.items():
         items.sort(key=lambda kv: (kv[0], kv[1]))
-        sorted_files = [fn for _, fn in items]
-        products[pid]["grouped_images"][variant] = sorted_files
-        products[pid]["image_filenames"].extend(sorted_files)
+        products[pid]["grouped_images"][variant] = [fn for _, fn in items]
 
     return list(products.values())
 

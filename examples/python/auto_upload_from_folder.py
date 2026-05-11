@@ -9,8 +9,10 @@
        同一 product_id 的不同变体合并；
        同一变体的多张图按 (1)(2)... 序号排序。
   2) 顺序上传每张图到 /api/file_to_url（folder = "<store_id>/<--group>"）
-  3) POST /api/product/ 一次性带 images（扁平 URL 列表）+ grouped_images
-       （按变体码分组的 URL 列表）+ category（解析得到）+ 可选 price。
+  3) POST /api/product/ 一次性带：
+       - grouped_images: {variant: [url, ...]}  按变体分组的图片 URL
+       - prices:         {variant: number}      按变体分组的价格（文件名解出的）
+       - category:       string                 从文件名解出的类别
 
 完全对应 E-Store-Panel 批量上传页 (productImportTool) 的行为，但跑在你
 本地，结果跟人肉点 Panel 等价。
@@ -112,7 +114,9 @@ def main() -> None:
     name_to_path = {f.name: f for f in image_files}
     tasks = group_by_product([f.name for f in image_files])
 
-    parsed_count = sum(len(t["image_filenames"]) for t in tasks)
+    parsed_count = sum(
+        len(fnames) for t in tasks for fnames in t["grouped_images"].values()
+    )
     skipped = len(image_files) - parsed_count
     if skipped > 0:
         print(f"⚠  {skipped} 张文件名无法解析，已跳过")
@@ -126,29 +130,24 @@ def main() -> None:
         pid = task["product_id"]
         variants = list(task["grouped_images"].keys())
         print(f"---- {pid}  (类别={task['category']}, 变体={variants}, "
-              f"价格={task['price']}) ----")
+              f"价格={dict(task['prices'])}) ----")
 
-        # 上传每张图，记下 filename → URL 映射
-        url_by_fname: dict[str, str] = {}
-        for fname in task["image_filenames"]:
-            print(f"  ↑ 上传 {fname} ...")
-            url = upload_image(name_to_path[fname], group)
-            url_by_fname[fname] = url
-
-        grouped_urls = {
-            variant: [url_by_fname[fn] for fn in fnames]
-            for variant, fnames in task["grouped_images"].items()
-        }
-        all_urls = [url_by_fname[fn] for fn in task["image_filenames"]]
+        # 按变体逐张上传，构造 variant → [URL] dict
+        grouped_urls: dict[str, list[str]] = {}
+        for variant, fnames in task["grouped_images"].items():
+            urls: list[str] = []
+            for fname in fnames:
+                print(f"  ↑ [{variant}] 上传 {fname} ...")
+                urls.append(upload_image(name_to_path[fname], group))
+            grouped_urls[variant] = urls
 
         body: dict = {
             "product_id": pid,
             "category": task["category"],
-            "images": all_urls,
             "grouped_images": grouped_urls,
         }
-        if task["price"] is not None:
-            body["price"] = task["price"]
+        if task["prices"]:
+            body["prices"] = dict(task["prices"])
 
         resp = upsert_product(pid, body)
         verb = (

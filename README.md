@@ -46,20 +46,22 @@ Form fields:
 说明
 - 同一 URL 可被多个商品复用；图片 URL 永久有效
 - 上传成功但商品 upsert 失败，孤儿图片不会影响数据一致性（服务端会按周期 GC）
-- **每个商品支持多张图**：循环调用本接口拿到多个 URL，作为下一步的 `images` 数组传入
+- **每个商品支持多张图**：循环调用本接口拿到多个 URL，按变体填入下一步 `grouped_images[variant]` 的 URL 数组
 
 #### 图片文件命名规则（平台约定）
 
 平台内部所有图片都按下面这套规则取名，强烈建议你也照此做——可以直接复用我们提供的 [`examples/python/parser.py`](./examples/python/parser.py)，省得自己再写解析逻辑。
 
 ```
-<类别>-<4 位数字><变体码>[(N)].<ext>
-  └┬┘    └──┬───┘ └─┬─┘  └┬┘
-   │       │      │    └─ 同一变体的额外图序号；主图无序号，第 2 张起 (1)、(2)…
-   │       │      │
-   │       │      └─ 平台真实变体码（business 子分类）：
-   │       │        AQ（最常见）/ CGAQ / S / M / V / RJ / DSAQ / SZAQ ...
-   │       │        **不要自行编造**，未列出的须先与运维确认。
+<类别>-<4 位数字>[<变体码>][(N)].<ext>
+  └┬┘    └──┬───┘ └──┬───┘  └┬┘
+   │       │       │       └─ 同一变体的额外图序号；主图无序号，第 2 张起 (1)、(2)…
+   │       │       │
+   │       │       └─ 平台真实变体码（business 子分类，**可选**）：
+   │       │         AQ（最常见）/ CGAQ / S / M / V / RJ / DSAQ / SZAQ ...
+   │       │         **不要自行编造**，未列出的须先与运维确认。
+   │       │         **不带变体码**时（4 位数字后直接是 `.ext` 或 `(N)`），
+   │       │         平台把这张图归到一个固定的中文字面量 `"默认"` 变体下。
    │       │
    │       └─ 4 位数字 SKU 序号
    │
@@ -77,21 +79,41 @@ Form fields:
 | `TSX-2760AQ(1).jpg` | product_id=`TSX-2760`，变体=`AQ`，类别=`TSX`，序号=第 2 张 |
 | `TSX-2760CGAQ.jpg` | product_id=`TSX-2760`，变体=`CGAQ`（同一商品的另一变体） |
 | `YDJ-7493S(红).jpg` | product_id=`YDJ-7493`，变体=`S`（括号中文标注会被自动剥离） |
+| `TSX-2760.jpg` | product_id=`TSX-2760`，变体=`默认`（4 位数字后无字母 → 归到 `"默认"` 这个 sentinel key 下） |
+| `TSX-2760(1).jpg` | 同上，变体=`默认`，序号=第 2 张 |
 
-#### product_id 与变体的关系
+#### product_id 与变体（SKU）的关系
 
-API 上的 `product_id` 是**类别 + 4 位数字**那段（如 `TSX-2760`），变体码 `AQ` 不属于 product_id，而是同一商品下的 SKU 子项——通过 `grouped_images` 字段表达：
+API 上的 `product_id` 是**类别 + 4 位数字**那段（如 `TSX-2760`），变体码 `AQ`/`CGAQ` 不属于 product_id，而是同一商品下的 SKU 子项。**真正的 SKU = `product_id` + `variant_id`**，体现在两个 dict 字段上：
 
 ```json
 {
   "product_id": "TSX-2760",
-  "images": ["url1", "url2", "url3"],
-  "grouped_images": {
-    "AQ":   ["url1", "url2"],   // 变体 AQ 下的 2 张图
-    "CGAQ": ["url3"]            // 变体 CGAQ 下的 1 张图
+  "grouped_images": {           // 每个变体的图片
+    "AQ":   ["url1", "url2"],
+    "CGAQ": ["url3"]
+  },
+  "prices": {                   // 每个变体的价格
+    "AQ":   89,
+    "CGAQ": 99
   }
 }
 ```
+
+- `grouped_images` 和 `prices` 都是 dict，**key 集合必须完全一致**，都为变体码
+- **SKU 编号到 4 位数字就结束、没有字母后缀的商品**（也就是该商品不存在变体维度）：dict 里**有且仅有一个 key，值固定为中文字面量 `"默认"`**——这是 Panel 批量上传工具同款约定（参见 [filePreprocess.js:40](https://github.com/Digital-Revo/E-Store-Panel/blob/master/src/filePreprocess.js#L40) 和 [productImportTool.js:336](https://github.com/Digital-Revo/E-Store-Panel/blob/master/src/pages/productImportTool.js#L336)）。例子：
+
+  ```json
+  {
+    "product_id": "TSX-2760",
+    "prices":         { "默认": 199 },
+    "grouped_images": { "默认": ["url1", "url2"] }
+  }
+  ```
+
+  > ⚠️ **不要**自创其他 sentinel（如 `"default"` / `""` / `"_"`）。Panel 的批量预览、价格编辑、合并去重等逻辑都字面量匹配 `"默认"` 这两个汉字；换别的值会让你的商品在 Panel 界面里被当成"有个叫 `default` 的真实变体"展示，并污染未来的合并导入流程。
+
+- 商品详情页、加购、报表都按变体维度（`selected_type`）从这两个 dict 里取数据。单变体商品（dict 只有 `"默认"` 这一个 key）在小程序商品页上**不会渲染变体选择 tab**，"默认" 二字也不会作为标签露出给买家
 
 > 文件名严格上不强制必须按此规范（后端只看 query/body），但**平台内部 100% 按此约定**上传。如果你的命名能对齐，路线 B 的自动脚本可以零配置跑通。
 
@@ -138,11 +160,11 @@ Body（`product_info`）建议字段：
 |---|---|---|
 | `product_id` | string | 与 query 一致即可（也可省略，服务端会自动补） |
 | `name` | string | 商品名 |
-| `price` | number | 价格 |
-| `images` | string[] | 步骤 2.1 返回的 URL 数组；**多图就放多个 URL** |
+| `prices` | `{variant: number}` | 按变体存价格的 dict，key 为变体码（如 `"AQ"`、`"CGAQ"`），无变体的商品统一用 `"默认"`。详见 2.1 |
+| `grouped_images` | `{variant: string[]}` | 按变体存图片 URL 的 dict，key 同 `prices`。详见 2.1 |
 | `category` | string | 分类 ID；该分类需事先在 Panel "分类管理"中存在 |
 | `tag_ids` | string[] | 商品标签 ID 列表，如 `["C1_银制", "C1_耳饰"]` |
-| `subcat_<id>` | string | 子分类取值；键名形如 `subcat_classify`、`subcat_material`，值为子分类的可选值 ID |
+| `subcat_<id>` | string | 子分类取值；键名形如 `subcat_classify`、`subcat_material`，值为子分类的可选值 ID。注意 subcat 是**给整个商品打的分类标签**（便于筛选），与上面的变体维度不是一回事 |
 | `plating` | string | 镀层 |
 | `material` | string | 材质 |
 | `stone` | string | 锆石 / 主石 |
@@ -157,8 +179,8 @@ Body（`product_info`）建议字段：
 200 {
   "product_id": "RING-001",
   "name": "玫瑰金戒指",
-  "price": 199,
-  "images": ["https://...", "https://..."],
+  "prices":         { "默认": 199 },
+  "grouped_images": { "默认": ["https://...", "https://..."] },
   ...
   "created": true,           // true=新建；false=已存在仅更新
   "updated": false,          // 本次 POST 是否有字段被修改
@@ -225,16 +247,17 @@ for path in ["img-front.jpg", "img-back.jpg", "img-detail.jpg"]:
         r.raise_for_status()
         image_urls.append(r.json()["url"])
 
-# Step 2：上传商品本身，把多张图的 URL 全塞 images 字段
+# Step 2：上传商品本身。价格和图片都按变体维度走 dict；
+#         没有变体维度的商品统一用 "默认" 作为唯一 key。
 r = requests.post(
     f"{HOST}/api/product/",
     params={"product_id": "RING-001"},
     json={
         "product_id": "RING-001",
         "name": "玫瑰金戒指",
-        "price": 199,
-        "images": image_urls,            # ← 多图
         "category": "YDJ",
+        "prices":         {"默认": 199},          # 按变体存价
+        "grouped_images": {"默认": image_urls},   # 按变体存图
         "subcat_classify": "ring",
         "subcat_main material": "s925 silver",
     },
@@ -242,6 +265,8 @@ r = requests.post(
 )
 print(r.json())
 ```
+
+> 多变体商品就把 `prices` / `grouped_images` 的 key 换成真实变体码（如 `"AQ"`、`"CGAQ"`），两个 dict 的 key 集合必须一致。
 
 ---
 
@@ -277,7 +302,7 @@ print(r.json())
 
 ## 7. 直接跑示例
 
-`examples/` 下有两条对应不同场景的可运行样例，使用的都是从平台真实下载的 9 张样本图（3 个商品、2~4 张图不等）。
+`examples/` 下有两条对应不同场景的可运行样例，使用的都是从平台真实下载的 11 张样本图（4 个商品、1~4 张图不等）。
 
 公共准备：
 
@@ -293,11 +318,18 @@ export E_STORE_TOKEN="<paste-your-token>"
 适合：你自己系统里已经维护好商品台账，能导出成 JSON。
 
 ```bash
-python upload_products.py    # 按 data/products.json 上传 3 个示例商品
+python upload_products.py    # 按 data/products.json 上传 4 个示例商品
 python delete_products.py    # 清场
 ```
 
-修改 [`data/products.json`](./examples/python/data/products.json) 就能换成你自己的数据。
+[`data/products.json`](./examples/python/data/products.json) 里 4 条覆盖了两种典型情况：
+
+| product_id | 演示重点 |
+|---|---|
+| `TSX-9001`、`YDJ-9001`、`AC-9001` | **有变体后缀**（`AQ`），dict 的 key 是变体码本身（这里都只有 `AQ` 一个 key，但若有多变体写法相同） |
+| `KBS-9001` | **无变体后缀**（文件名 `KBS-9001.jpg`、`KBS-9001(1).jpg` 不带字母），dict 的 key 是中文字面量 `"默认"`——和 Panel 批量上传工具的产物完全等价 |
+
+修改这份 JSON 就能换成你自己的数据。
 
 ### 路线 B：你只有一堆按命名规范取名的图
 
@@ -314,7 +346,7 @@ python auto_upload_from_folder.py /path/to/my-images/ --group 2026Q2-IMPORT
 2. 用 [`parser.py`](./examples/python/parser.py) 按命名规则解析每个文件名，提取 product_id / 变体 / 类别 / 价格（可选）
 3. 同一 product_id 的不同变体合并、同一变体下多张图按 `(N)` 排序
 4. 调 `/api/file_to_url` 上传每张图（folder = `<store_id>/<--group>`）
-5. 调 `/api/product/` 一次性带 `images`（扁平 URL）+ `grouped_images`（按变体分组）+ `category`
+5. 调 `/api/product/` 一次性带 `grouped_images`（按变体分组的 URL）+ `prices`（按变体的价格，文件名解出）+ `category`
 
 跟 Panel 批量上传页 ([productImportTool.js](https://github.com/Digital-Revo/E-Store-Panel/blob/master/src/pages/productImportTool.js) + [filePreprocess.js](https://github.com/Digital-Revo/E-Store-Panel/blob/master/src/filePreprocess.js)) 走的是等价规则；结果与点 Panel 完全一致。
 
@@ -327,4 +359,4 @@ cd examples/curl
 
 ---
 
-**版本：v1.2（2026-05-11）**
+**版本：v1.3（2026-05-11）** —— 商品字段统一为 `prices` / `grouped_images` 两个 dict（变体维度即 SKU），废弃 `price` / `images` 扁平字段。SKU 编号到 4 位数字结束、无字母后缀的商品，dict 用中文字面量 `"默认"` 作为唯一 key（与 Panel 既有约定对齐）。

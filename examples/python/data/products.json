@@ -2,12 +2,16 @@
   {
     "product_id": "TSX-9001",
     "name": "动物造型铜质手链（示例）",
-    "price": 89,
     "category": "TSX",
-    "image_filenames": [
-      "TSX-9001AQ.jpg",
-      "TSX-9001AQ(1).jpg"
-    ],
+    "prices": {
+      "AQ": 89
+    },
+    "grouped_image_filenames": {
+      "AQ": [
+        "TSX-9001AQ.jpg",
+        "TSX-9001AQ(1).jpg"
+      ]
+    },
     "subcat_main material": "copper",
     "subcat_chanel": "xuhui",
     "subcat_classify": "bracelet",
@@ -17,13 +21,17 @@
   {
     "product_id": "YDJ-9001",
     "name": "S925 天然石戒指（示例）",
-    "price": 159,
     "category": "YDJ",
-    "image_filenames": [
-      "YDJ-9001AQ.jpg",
-      "YDJ-9001AQ(1).jpg",
-      "YDJ-9001AQ(2).jpg"
-    ],
+    "prices": {
+      "AQ": 159
+    },
+    "grouped_image_filenames": {
+      "AQ": [
+        "YDJ-9001AQ.jpg",
+        "YDJ-9001AQ(1).jpg",
+        "YDJ-9001AQ(2).jpg"
+      ]
+    },
     "subcat_main material": "s925 silver",
     "subcat_chanel": "silver",
     "subcat_classify": "ring",
@@ -32,17 +40,37 @@
   {
     "product_id": "AC-9001",
     "name": "金色锆石耳钉（示例）",
-    "price": 119,
     "category": "AC",
-    "image_filenames": [
-      "AC-9001AQ.png",
-      "AC-9001AQ(1).jpg",
-      "AC-9001AQ(2).jpg",
-      "AC-9001AQ(3).png"
-    ],
+    "prices": {
+      "AQ": 119
+    },
+    "grouped_image_filenames": {
+      "AQ": [
+        "AC-9001AQ.png",
+        "AC-9001AQ(1).jpg",
+        "AC-9001AQ(2).jpg",
+        "AC-9001AQ(3).png"
+      ]
+    },
     "subcat_main material": "copper",
     "subcat_chanel": "gold",
     "subcat_classify": "earring",
     "subcat_material": "zircon"
+  },
+  {
+    "product_id": "KBS-9001",
+    "name": "纯色编织手链（无变体示例）",
+    "category": "KBS",
+    "prices": {
+      "默认": 69
+    },
+    "grouped_image_filenames": {
+      "默认": [
+        "KBS-9001.jpg",
+        "KBS-9001(1).jpg"
+      ]
+    },
+    "subcat_main material": "rope",
+    "subcat_classify": "bracelet"
   }
 ]
